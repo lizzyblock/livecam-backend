@@ -1,0 +1,277 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Identity & Teams
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(cuid())
+  clerkId       String   @unique
+  email         String   @unique
+  name          String?
+  avatarUrl     String?
+  referralCode  String   @unique @default(cuid())
+  referredById  String?
+  referredBy    User?    @relation("Referrals", fields: [referredById], references: [id])
+  referrals     User[]   @relation("Referrals")
+  memberships   WorkspaceMember[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([clerkId])
+}
+
+model Workspace {
+  id               String   @id @default(cuid())
+  name             String
+  slug             String   @unique
+  stripeCustomerId String?  @unique
+  members          WorkspaceMember[]
+  subscription     Subscription?
+  creditBalance    CreditBalance?
+  ledger           CreditLedgerEntry[]
+  jobs             GenerationJob[]
+  assets           Asset[]
+  livecamSessions  LivecamSession[]
+  adAccounts       AdAccount[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  role        WorkspaceRole @default(MEMBER)
+  userId      String
+  workspaceId String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime      @default(now())
+
+  @@unique([userId, workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Billing & Credits
+// ─────────────────────────────────────────────────────────────
+
+enum PlanTier {
+  STARTER
+  CREATOR
+  STUDIO
+  AGENCY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  workspaceId          String             @unique
+  workspace            Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  stripeSubscriptionId String             @unique
+  stripePriceId        String
+  tier                 PlanTier
+  status               SubscriptionStatus
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean            @default(false)
+  monthlyCredits       Int
+  monthlyLivecamMinutes Int
+  seats                Int                @default(1)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+}
+
+model CreditBalance {
+  id              String    @id @default(cuid())
+  workspaceId     String    @unique
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  credits         Int       @default(0)
+  livecamSeconds  Int       @default(0)
+  updatedAt       DateTime  @updatedAt
+}
+
+enum LedgerReason {
+  SUBSCRIPTION_GRANT
+  TOPUP_PURCHASE
+  IMAGE_GENERATION
+  VIDEO_GENERATION
+  AUDIO_GENERATION
+  LIVECAM_USAGE
+  REFERRAL_BONUS
+  REFUND
+  ADMIN_ADJUSTMENT
+  EXPIRY
+}
+
+model CreditLedgerEntry {
+  id          String       @id @default(cuid())
+  workspaceId String
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  delta       Int // positive = grant, negative = spend
+  reason      LedgerReason
+  jobId       String?
+  metadata    Json?
+  idempotencyKey String?   @unique
+  createdAt   DateTime     @default(now())
+
+  @@index([workspaceId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Generation Pipeline
+// ─────────────────────────────────────────────────────────────
+
+enum JobKind {
+  IMAGE_GENERATE
+  IMAGE_EDIT
+  IMAGE_UPSCALE
+  IMAGE_BG_REMOVE
+  VIDEO_TEXT_TO_VIDEO
+  VIDEO_IMAGE_TO_VIDEO
+  VIDEO_EDIT
+  TTS
+  VOICE_CLONE
+  MUSIC_GENERATE
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+model GenerationJob {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdById  String
+  kind         JobKind
+  status       JobStatus @default(QUEUED)
+  provider     String? // which upstream provider actually served it
+  input        Json
+  output       Json?
+  error        String?
+  creditsCost  Int
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  assets       Asset[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+}
+
+enum AssetType {
+  IMAGE
+  VIDEO
+  AUDIO
+}
+
+model Asset {
+  id          String        @id @default(cuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  jobId       String?
+  job         GenerationJob? @relation(fields: [jobId], references: [id])
+  type        AssetType
+  storageKey  String
+  mimeType    String
+  sizeBytes   Int?
+  width       Int?
+  height      Int?
+  durationMs  Int?
+  createdAt   DateTime      @default(now())
+
+  @@index([workspaceId, type])
+}
+
+// ─────────────────────────────────────────────────────────────
+// FUA LiveCam (real-time)
+// ─────────────────────────────────────────────────────────────
+
+enum LivecamStatus {
+  ACTIVE
+  ENDED
+}
+
+model LivecamSession {
+  id            String        @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId        String
+  roomName      String        @unique
+  effectPreset  String
+  status        LivecamStatus @default(ACTIVE)
+  startedAt     DateTime      @default(now())
+  endedAt       DateTime?
+  billedSeconds Int           @default(0)
+
+  @@index([workspaceId, status])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Marketing & Ads (official platform APIs)
+// ─────────────────────────────────────────────────────────────
+
+enum AdPlatform {
+  META
+  TIKTOK
+  GOOGLE_ADS
+  YOUTUBE
+  LINKEDIN
+}
+
+model AdAccount {
+  id           String     @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  platform     AdPlatform
+  externalId   String
+  displayName  String?
+  // OAuth tokens stored encrypted at rest (see crypto util)
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  campaigns    AdCampaign[]
+  createdAt    DateTime   @default(now())
+
+  @@unique([workspaceId, platform, externalId])
+}
+
+model AdCampaign {
+  id          String    @id @default(cuid())
+  adAccountId String
+  adAccount   AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  externalId  String
+  name        String
+  objective   String?
+  status      String
+  spendCents  Int       @default(0)
+  metrics     Json?
+  syncedAt    DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([adAccountId, externalId])
+}
