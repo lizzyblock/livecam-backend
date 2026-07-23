@@ -57,6 +57,15 @@ export class LivecamController {
     return this.livecam.startSession(m.workspaceId, user.id, dto.effectPreset, dto.voiceId, dto.faceId);
   }
 
+  /** Token + URL for the desktop companion and OBS browser source. */
+  @Post('sessions/:id/output-link')
+  outputLink(
+    @CurrentMembership() m: AuthedMembership,
+    @Param('id') id: string,
+  ) {
+    return this.livecam.createOutputLink(m.workspaceId, id);
+  }
+
   @Post('sessions/:id/face')
   setFace(
     @CurrentMembership() m: AuthedMembership,

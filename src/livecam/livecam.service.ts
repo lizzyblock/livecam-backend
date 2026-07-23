@@ -179,6 +179,45 @@ export class LivecamService {
     }).catch((e) => this.logger.warn(`Worker dispatch failed: ${e.message}`));
   }
 
+  /**
+   * Mint a subscribe-only token for the session's room.
+   *
+   * This is what the desktop companion and the OBS browser source use: it can
+   * watch the processed output but can't publish or control anything, so it's
+   * safe to paste into a capture tool. Short TTL, tied to the live session.
+   */
+  async createOutputLink(workspaceId: string, sessionId: string) {
+    const session = await this.prisma.livecamSession.findFirst({
+      where: { id: sessionId, workspaceId, status: 'ACTIVE' },
+    });
+    if (!session) throw new NotFoundException('Active session not found');
+
+    const token = new AccessToken(
+      this.config.get<string>('livekit.apiKey'),
+      this.config.get<string>('livekit.apiSecret'),
+      { identity: `output-${sessionId}`, ttl: '6h' },
+    );
+    token.addGrant({
+      room: session.roomName,
+      roomJoin: true,
+      canPublish: false,
+      canPublishData: false,
+      canSubscribe: true,
+      hidden: true,
+    });
+
+    const url = this.config.get<string>('livekit.url');
+    const jwt = await token.toJwt();
+
+    // The companion takes a compact code; OBS takes a plain URL.
+    const code = Buffer.from(JSON.stringify({ url, token: jwt })).toString('base64');
+
+    return {
+      code,
+      browserSourceUrl: `${this.config.get<string>('frontendUrl')?.split(',')[0]}/output/${encodeURIComponent(code)}`,
+    };
+  }
+
   /** Switch (or disable) the swapped face mid-session. */
   async setFace(workspaceId: string, sessionId: string, faceId: string | null) {
     const session = await this.prisma.livecamSession.findFirst({
