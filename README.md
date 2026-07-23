@@ -50,7 +50,9 @@ Every provider sits behind an adapter (`src/generation/providers/`) so swapping 
 | `billing/` | Stripe Checkout (subscriptions + credit top-ups), Customer Portal, webhook sync, monthly credit + LiveCam-minute grants on `invoice.paid` |
 | `generation/` | Job creation (credits reserved up-front), job/asset listing with signed download URLs |
 | `jobs/` | BullMQ worker: routes to provider, ingests output into Storj, records assets, refunds credits on terminal failure |
-| `livecam/` | LiveKit token minting, 30s heartbeat metering, graceful stop when minutes run out |
+| `livecam/` | LiveKit token minting, 30s heartbeat metering, graceful stop when minutes run out; dispatches the GPU worker with face/voice config per session |
+| `voices/` | Voice library (stock + cloned), ElevenLabs cloning with auto-refund, used by TTS and real-time voice |
+| `faces/` | Face library for real-time swap; consent-gated enrollment, short-lived portrait URLs handed to the worker |
 | `marketing/` | Official ad-API account linking (Meta/TikTok/Google/YouTube/LinkedIn) + campaign mirror — no engagement-panel functionality by design |
 
 ## Getting started
@@ -84,7 +86,14 @@ POST /generation/jobs             { kind, prompt, ... } → queued job
 GET  /generation/jobs/:id         status + signed asset URLs
 GET  /generation/assets?type=IMAGE
 
-POST /livecam/sessions            { effectPreset } → LiveKit token + room
+POST /voices                      clone a voice from samples
+GET  /voices                      stock + cloned voices
+POST /faces                       enroll a face (consent required)
+GET  /faces                       your enrolled faces
+
+POST /livecam/sessions            { effectPreset, voiceId?, faceId? } → token + room
+POST /livecam/sessions/:id/face   swap/disable face mid-session
+POST /livecam/sessions/:id/voice  swap/disable voice mid-session
 POST /livecam/sessions/:id/heartbeat   meters 30s; shouldStop when dry
 POST /livecam/sessions/:id/end
 
@@ -99,10 +108,37 @@ GET  /health                      (public)
 - Credit spends are reserved when a job is created and **automatically refunded** if the provider fails after retries — users never pay for failed generations.
 - One-off top-ups via Stripe Checkout `mode: payment` with per-credit pricing you can tune in `billing.service.ts`.
 
+## GPU cost control (sleep when idle)
+
+The GPU worker is the only expensive part of the stack, so it's stopped
+whenever nobody is streaming. Set these in `.env` and it manages itself:
+
+```dotenv
+RUNPOD_API_KEY=...
+RUNPOD_POD_ID=...
+WORKER_IDLE_SLEEP_MS=300000   # sleep 5 min after the last session ends
+```
+
+- **Wake**: the LiveCam page calls `POST /livecam/prewarm` on open, so the
+  pod boots while the user picks a face. `POST /livecam/sessions` also waits
+  for the worker to be healthy before handing out a token.
+- **Sleep**: when the last active session ends (or runs out of minutes), a
+  grace timer fires and stops the pod. The grace period prevents thrashing
+  when creators overlap or restart.
+- **Safety net**: the worker also watches itself — `IDLE_SHUTDOWN_SECONDS`
+  (default 15 min) stops its own pod if the API's stop call never arrives, so
+  an idle GPU can't bill overnight.
+- Leave `RUNPOD_*` blank and the worker is treated as always-on (correct for
+  self-hosted or LiveKit Cloud deployments).
+
+Rough economics at ~$0.39/hr: an always-on pod is ~$285/month regardless of
+use. With sleep enabled you pay only for streamed hours — 20 hours of real
+usage is about $8.
+
 ## What's intentionally left as next steps
 
 - **Kling adapter**: `CompositeVideoProvider` is structured for it — implement `klingGeneration()` mirroring the Luma flow once your Kling account/keys are approved, then route by cost/availability.
-- **GPU inference worker** for FUA LiveCam: a separate Python service that joins LiveKit rooms and runs LivePortrait/StreamDiffusion-style models — deploy on Runpod with autoscaling by active session count.
+- **GPU inference worker** for FUA LiveCam: shipped separately as `livecam-worker` (Python + InsightFace inswapper). It joins LiveKit rooms, swaps the enrolled face frame-by-frame, and republishes the processed track. Set `LIVECAM_WORKER_URL` to point at it.
 - **Desktop virtual-camera companion**: small Electron app subscribing to the processed LiveKit track and exposing it as a virtual webcam (OBS Virtual Camera SDK).
 - **Ad-platform sync adapters**: OAuth flows + campaign sync for Meta Marketing API / TikTok Ads / Google Ads (each requires platform app review, so ship after you have real users).
 - **VOICE_CLONE / VIDEO_EDIT** job kinds are modeled in the schema and priced; wire them to ElevenLabs voice-add and Shotstack respectively when you enable those features.

@@ -36,3 +36,6 @@ export const PLANS: Record<string, PlanDefinition> = {
 };
 
 export const REFERRAL_BONUS_CREDITS = 100;
+
+/** One-time cost to enroll a face for real-time face swap. */
+export const FACE_ENROLL_CREDITS = 5;

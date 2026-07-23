@@ -10,6 +10,7 @@ import { CompositeVideoProvider } from '../generation/providers/video.provider';
 import { CompositeAudioProvider } from '../generation/providers/audio.provider';
 import { GeneratedFile } from '../generation/providers/provider.interface';
 import { GENERATION_QUEUE } from './queues';
+import { VoicesService } from '../voices/voices.service';
 
 /**
  * BullMQ worker that executes generation jobs: routes to the right provider,
@@ -27,6 +28,7 @@ export class GenerationProcessor extends WorkerHost {
     private readonly images: FalImageProvider,
     private readonly videos: CompositeVideoProvider,
     private readonly audio: CompositeAudioProvider,
+    private readonly voices: VoicesService,
   ) {
     super();
   }
@@ -45,7 +47,7 @@ export class GenerationProcessor extends WorkerHost {
     const input = record.input as any;
 
     try {
-      const { files, assetType, provider, ext } = await this.route(record.kind, input);
+      const { files, assetType, provider, ext } = await this.route(record.kind, input, record.workspaceId);
 
       const assets = [];
       for (const file of files) {
@@ -105,6 +107,7 @@ export class GenerationProcessor extends WorkerHost {
   private async route(
     kind: string,
     input: any,
+    workspaceId: string,
   ): Promise<{ files: GeneratedFile[]; assetType: AssetType; provider: string; ext: string }> {
     switch (kind) {
       case 'IMAGE_GENERATE':
@@ -167,17 +170,25 @@ export class GenerationProcessor extends WorkerHost {
           provider: this.videos.name,
           ext: 'mp4',
         };
-      case 'TTS':
+      case 'TTS': {
+        // voiceId is a Voice library id — resolve it to the provider's id so
+        // cloned voices and stock voices work identically.
+        let providerVoiceId: string | undefined;
+        if (input.voiceId) {
+          const voice = await this.voices.resolveProviderVoice(workspaceId, input.voiceId);
+          providerVoiceId = voice.providerVoiceId;
+        }
         return {
           files: await this.audio.tts({
             text: input.prompt,
-            voiceId: input.voiceId,
+            voiceId: providerVoiceId,
             premium: input.options?.premium,
           }),
           assetType: 'AUDIO',
           provider: this.audio.name,
           ext: 'mp3',
         };
+      }
       case 'MUSIC_GENERATE':
         return {
           files: await this.audio.music({

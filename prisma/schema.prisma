@@ -223,6 +223,8 @@ model LivecamSession {
   userId        String
   roomName      String        @unique
   effectPreset  String
+  voiceId       String?       // voice applied to the mic track in real time
+  faceId        String?       // face applied to the video track in real time
   status        LivecamStatus @default(ACTIVE)
   startedAt     DateTime      @default(now())
   endedAt       DateTime?
@@ -274,4 +276,54 @@ model AdCampaign {
   createdAt   DateTime  @default(now())
 
   @@unique([adAccountId, externalId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Voice Library (stock + cloned voices, usable in TTS & LiveCam)
+// ─────────────────────────────────────────────────────────────
+
+enum VoiceStatus {
+  PROCESSING
+  READY
+  FAILED
+}
+
+model Voice {
+  id              String      @id @default(cuid())
+  workspaceId     String?     // null = stock voice available to everyone
+  name            String
+  description     String?
+  provider        String      @default("elevenlabs")
+  providerVoiceId String
+  isCloned        Boolean     @default(false)
+  status          VoiceStatus @default(READY)
+  previewKey      String?     // short sample stored in Storj
+  createdById     String?
+  createdAt       DateTime    @default(now())
+
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Face Library (for real-time LiveCam face swap)
+// ─────────────────────────────────────────────────────────────
+
+enum FaceStatus {
+  PROCESSING
+  READY
+  FAILED
+}
+
+model FaceModel {
+  id            String     @id @default(cuid())
+  workspaceId   String
+  name          String
+  imageKey      String     // reference portrait in Storj
+  status        FaceStatus @default(READY)
+  // Uploader attested they have rights/consent to use this likeness
+  consentAt     DateTime
+  createdById   String
+  createdAt     DateTime   @default(now())
+
+  @@index([workspaceId])
 }

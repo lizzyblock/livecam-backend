@@ -34,6 +34,16 @@ export default () => ({
     url: process.env.LIVEKIT_URL,
     apiKey: process.env.LIVEKIT_API_KEY,
     apiSecret: process.env.LIVEKIT_API_SECRET,
+    workerUrl: process.env.LIVECAM_WORKER_URL, // GPU worker dispatch endpoint
+  },
+
+  worker: {
+    // Optional — when set, the GPU pod is stopped while LiveCam is idle
+    // and started on demand. Leave unset for an always-on worker.
+    runpodApiKey: process.env.RUNPOD_API_KEY,
+    runpodPodId: process.env.RUNPOD_POD_ID,
+    bootTimeoutMs: parseInt(process.env.WORKER_BOOT_TIMEOUT_MS ?? '120000', 10),
+    idleSleepMs: parseInt(process.env.WORKER_IDLE_SLEEP_MS ?? '300000', 10),
   },
 
   providers: {

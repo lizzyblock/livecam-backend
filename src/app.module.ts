@@ -13,6 +13,8 @@ import { BillingModule } from './billing/billing.module';
 import { GenerationModule } from './generation/generation.module';
 import { JobsModule } from './jobs/jobs.module';
 import { LivecamModule } from './livecam/livecam.module';
+import { VoicesModule } from './voices/voices.module';
+import { FacesModule } from './faces/faces.module';
 import { MarketingModule } from './marketing/marketing.module';
 import { HealthModule } from './health/health.module';
 import { ClerkAuthGuard } from './common/guards/clerk-auth.guard';
@@ -38,6 +40,8 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     GenerationModule,
     JobsModule,
     LivecamModule,
+    VoicesModule,
+    FacesModule,
     MarketingModule,
     HealthModule,
   ],
