@@ -1,12 +1,14 @@
 {
   "name": "livecam-backend",
   "version": "0.1.0",
-  "description": "LiveCam — AI content platform backend (NestJS)",
+  "description": "LiveCam \u2014 AI content platform backend (NestJS)",
   "main": "index.js",
   "scripts": {
     "build": "nest build",
-    "start": "node dist/main.js",
+    "start": "prisma migrate deploy && node dist/main.js",
+    "start:no-migrate": "node dist/main.js",
     "start:dev": "nest start --watch",
+    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy"

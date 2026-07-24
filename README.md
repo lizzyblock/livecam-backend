@@ -55,6 +55,41 @@ Every provider sits behind an adapter (`src/generation/providers/`) so swapping 
 | `faces/` | Face library for real-time swap; consent-gated enrollment, short-lived portrait URLs handed to the worker |
 | `marketing/` | Official ad-API account linking (Meta/TikTok/Google/YouTube/LinkedIn) + campaign mirror — no engagement-panel functionality by design |
 
+## Database setup (do this once, before first deploy)
+
+The repo ships **no migration files** — they have to be generated against a
+real database. Until you do this, your Postgres has no tables and every
+request fails once it gets past auth.
+
+Run this **from your machine**, pointed at your production database:
+
+```bash
+cd livecam-backend
+npm install
+
+# Railway: Postgres service -> Connect -> Public Network -> copy the URL.
+# The ${{Postgres.DATABASE_URL}} reference is an INTERNAL hostname and will
+# not resolve from your laptop.
+export DATABASE_URL="postgresql://postgres:...@viaduct.proxy.rlwy.net:PORT/railway"
+
+npx prisma migrate dev --name init
+```
+
+That creates `prisma/migrations/`, applies it, and generates the client.
+**Commit the migrations folder** — it's what every future deploy replays:
+
+```bash
+git add prisma/migrations && git commit -m "initial migration" && git push
+```
+
+From then on it's automatic: `npm start` runs `prisma migrate deploy` before
+booting, so the schema always matches the deployed code.
+
+**Quicker alternative for a throwaway environment:** `npx prisma db push`
+creates the tables directly from `schema.prisma` with no migration history.
+Fine for experimenting, but you lose the ability to evolve the schema safely,
+so prefer `migrate dev` for anything you intend to keep.
+
 ## Getting started
 
 ```bash

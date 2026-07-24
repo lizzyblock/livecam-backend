@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -17,6 +18,7 @@ import { AuthService } from '../../auth/auth.service';
  */
 @Injectable()
 export class ClerkAuthGuard implements CanActivate {
+  private readonly logger = new Logger(ClerkAuthGuard.name);
   private jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
   constructor(
@@ -28,12 +30,33 @@ export class ClerkAuthGuard implements CanActivate {
 
   private getJwks() {
     if (!this.jwks) {
-      const url =
-        this.config.get<string>('clerk.jwksUrl') ??
-        `${this.config.get<string>('clerk.issuer')}/.well-known/jwks.json`;
-      this.jwks = createRemoteJWKSet(new URL(url));
+      this.jwks = createRemoteJWKSet(new URL(this.jwksUrl()));
     }
     return this.jwks;
+  }
+
+  private jwksUrl() {
+    return (
+      this.config.get<string>('clerk.jwksUrl') ??
+      `${this.config.get<string>('clerk.issuer')}/.well-known/jwks.json`
+    );
+  }
+
+  /**
+   * Read the issuer out of a token without verifying it.
+   *
+   * Used purely for diagnostics: when key lookup fails, the single most
+   * useful thing to report is which Clerk instance actually issued the
+   * token, so the mismatch can be fixed in one step rather than guessed at.
+   */
+  private static peekIssuer(token: string): string | null {
+    try {
+      const payload = token.split('.')[1];
+      const json = Buffer.from(payload, 'base64url').toString('utf8');
+      return JSON.parse(json)?.iss ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -74,6 +97,35 @@ export class ClerkAuthGuard implements CanActivate {
       // Distinguish a genuinely bad/expired token from a misconfigured
       // issuer, which otherwise both surface as "please sign in again".
       const message = (e as Error)?.message ?? '';
+
+      // The JWKS had no key matching this token's `kid` — the backend is
+      // pointed at a different Clerk instance than the frontend.
+      if (/JSON Web Key Set|no applicable key/i.test(message)) {
+        const header: string | undefined = req.headers['authorization'];
+        const actual = header
+          ? ClerkAuthGuard.peekIssuer(header.slice(7))
+          : null;
+        const configured = this.config.get<string>('clerk.issuer');
+
+        this.logger.error(
+          `Clerk instance mismatch. Token issuer: ${actual ?? 'unknown'} | ` +
+            `CLERK_ISSUER: ${configured ?? 'unset'} | JWKS: ${this.jwksUrl()}`,
+        );
+
+        throw new UnauthorizedException({
+          code: 'CLERK_INSTANCE_MISMATCH',
+          message:
+            'Auth is misconfigured. This token was issued by ' +
+            `${actual ?? 'an unknown Clerk instance'}, but the API is ` +
+            `configured for ${configured ?? '(CLERK_ISSUER not set)'}. ` +
+            'Set CLERK_ISSUER on the API to the value shown as the token ' +
+            'issuer, and CLERK_JWKS_URL to that value + ' +
+            '/.well-known/jwks.json',
+          tokenIssuer: actual,
+          configuredIssuer: configured ?? null,
+        });
+      }
+
       if (/issuer|audience|"iss"|"aud"/i.test(message)) {
         throw new UnauthorizedException({
           code: 'CLERK_ISSUER_MISMATCH',
