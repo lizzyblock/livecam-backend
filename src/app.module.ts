@@ -26,9 +26,26 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
     BullModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: { url: config.get<string>('redis.url') },
-      }),
+      useFactory: (config: ConfigService) => {
+        const url = config.get<string>('redis.url') ?? '';
+        // Hosted Redis (Upstash, Aiven, Redis Cloud) is TLS-only. A plain
+        // redis:// URL to a TLS endpoint is closed mid-handshake and shows up
+        // as a flood of ECONNRESET rather than a clear TLS error.
+        const isTls = url.startsWith('rediss://');
+
+        return {
+          connection: {
+            url,
+            // BullMQ holds blocking connections (BRPOPLPUSH). ioredis's
+            // default of 20 retries per request kills those, producing
+            // MaxRetriesPerRequestError under normal operation — BullMQ
+            // requires this to be null.
+            maxRetriesPerRequest: null,
+            enableReadyCheck: false,
+            ...(isTls ? { tls: {} } : {}),
+          },
+        };
+      },
     }),
     PrismaModule,
     StorageModule,

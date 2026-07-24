@@ -6,6 +6,7 @@ export default () => ({
   database: { url: process.env.DATABASE_URL },
   // No localhost fallback in production: silently pointing at a Redis that
   // isn't there produces an infinite ioredis retry loop rather than an error.
+  // Hosted providers need rediss:// (TLS) — see app.module.ts.
   redis: {
     url:
       process.env.REDIS_URL ??

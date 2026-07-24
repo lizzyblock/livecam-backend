@@ -15,6 +15,20 @@ function checkRequiredEnv() {
     REDIS_URL: 'Redis connection string — on Railway use ${{Redis.REDIS_URL}}',
   };
 
+  // A very common paste error: hosted Redis is TLS-only, so redis:// gets
+  // the connection reset instead of a useful error.
+  const redis = process.env.REDIS_URL ?? '';
+  const hostedTlsProvider = /upstash\.io|redns\.redis-cloud\.com|aivencloud\.com/.test(
+    redis,
+  );
+  if (redis.startsWith('redis://') && hostedTlsProvider) {
+    Logger.warn(
+      'REDIS_URL starts with redis:// but points at a hosted provider that ' +
+        'requires TLS. Change it to rediss:// or expect ECONNRESET.',
+      'Bootstrap',
+    );
+  }
+
   const missing = Object.entries(required).filter(([key]) => !process.env[key]);
   if (missing.length === 0) return;
 
