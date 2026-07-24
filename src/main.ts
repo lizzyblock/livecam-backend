@@ -4,7 +4,41 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 
+/**
+ * Fail fast with a readable message when required infrastructure is missing.
+ * Without this, a missing REDIS_URL surfaces as an endless stream of
+ * ECONNRESET and MaxRetriesPerRequestError with no indication of the cause.
+ */
+function checkRequiredEnv() {
+  const required: Record<string, string> = {
+    DATABASE_URL: 'Postgres connection string — on Railway use ${{Postgres.DATABASE_URL}}',
+    REDIS_URL: 'Redis connection string — on Railway use ${{Redis.REDIS_URL}}',
+  };
+
+  const missing = Object.entries(required).filter(([key]) => !process.env[key]);
+  if (missing.length === 0) return;
+
+  const line = '='.repeat(64);
+  Logger.error(
+    [
+      '',
+      line,
+      ' LiveCam API cannot start — missing configuration',
+      line,
+      '',
+      ...missing.map(([key, why]) => `  ${key.padEnd(16)} ${why}`),
+      '',
+      ' Set these in your host\'s environment variables and redeploy.',
+      line,
+      '',
+    ].join('\n'),
+    'Bootstrap',
+  );
+  process.exit(1);
+}
+
 async function bootstrap() {
+  checkRequiredEnv();
   const app = await NestFactory.create(AppModule, {
     // rawBody needed for Stripe webhook signature verification
     rawBody: true,

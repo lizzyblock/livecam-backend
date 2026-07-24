@@ -4,7 +4,15 @@ export default () => ({
   frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:3000',
 
   database: { url: process.env.DATABASE_URL },
-  redis: { url: process.env.REDIS_URL ?? 'redis://localhost:6379' },
+  // No localhost fallback in production: silently pointing at a Redis that
+  // isn't there produces an infinite ioredis retry loop rather than an error.
+  redis: {
+    url:
+      process.env.REDIS_URL ??
+      (process.env.NODE_ENV === 'production'
+        ? undefined
+        : 'redis://localhost:6379'),
+  },
 
   clerk: {
     issuer: process.env.CLERK_ISSUER,
