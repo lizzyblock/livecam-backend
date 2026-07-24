@@ -158,7 +158,7 @@ export class LivecamService {
     }
     await this.worker.ensureAwake();
 
-    await this.dispatchWorker({
+    const dispatch = await this.dispatchWorker({
       room: roomName,
       effectPreset,
       voice: voice
@@ -175,6 +175,9 @@ export class LivecamService {
       remainingSeconds: balance.livecamSeconds,
       voice: voice ? { id: voice.id, name: voice.name } : null,
       face: face ? { id: face.id, name: face.name } : null,
+      // The session is still usable if this failed — the streamer just gets
+      // an untransformed feed — but the UI needs to say so plainly.
+      worker: dispatch,
     };
   }
 
@@ -183,11 +186,13 @@ export class LivecamService {
    * Fire-and-forget: if the worker is briefly unreachable it also watches
    * for new rooms via LiveKit webhooks as a fallback.
    */
-  private async dispatchWorker(payload: Record<string, unknown>) {
+  private async dispatchWorker(
+    payload: Record<string, unknown>,
+  ): Promise<{ ok: boolean; detail: string }> {
     const raw = this.config.get<string>('livekit.workerUrl');
     if (!raw) {
       this.logger.warn('LIVECAM_WORKER_URL not set — no GPU worker to dispatch');
-      return;
+      return { ok: false, detail: 'LIVECAM_WORKER_URL is not set' };
     }
     // Same normalisation as WorkerControlService: tolerate a pasted
     // /healthz suffix or trailing slash.
@@ -196,22 +201,41 @@ export class LivecamService {
       .replace(/\/+$/, '')
       .replace(/\/(healthz|health)$/i, '');
 
-    this.logger.log(`Dispatching worker for room ${payload.room}`);
-    fetch(`${workerUrl}/dispatch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = await res.text().catch(() => '');
-          this.logger.error(
-            `Worker dispatch returned ${res.status}: ${body.slice(0, 200)} ` +
-              `(url: ${workerUrl}/dispatch)`,
-          );
-        }
-      })
-      .catch((e) => this.logger.warn(`Worker dispatch failed: ${e.message}`));
+    const target = `${workerUrl}/dispatch`;
+    this.logger.log(`Dispatching worker for room ${payload.room} -> ${target}`);
+
+    // Awaited, not fire-and-forget. An unawaited failure here is invisible:
+    // the session starts, the browser shows a passthrough, and nothing
+    // anywhere says the request never landed. A few hundred milliseconds of
+    // latency is worth knowing.
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10_000);
+      const res = await fetch(target, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+
+      const body = await res.text().catch(() => '');
+      if (!res.ok) {
+        const detail = `worker returned ${res.status}: ${body.slice(0, 200)}`;
+        this.logger.error(`Dispatch failed — ${detail} (${target})`);
+        return { ok: false, detail };
+      }
+
+      this.logger.log(`Worker accepted room ${payload.room}: ${body.slice(0, 120)}`);
+      return { ok: true, detail: body.slice(0, 120) };
+    } catch (e) {
+      const detail =
+        (e as Error).name === 'AbortError'
+          ? `no response within 10s from ${target}`
+          : `${(e as Error).message} (${target})`;
+      this.logger.error(`Dispatch failed — ${detail}`);
+      return { ok: false, detail };
+    }
   }
 
   /**
