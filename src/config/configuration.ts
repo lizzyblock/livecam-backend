@@ -19,6 +19,8 @@ export default () => ({
     issuer: process.env.CLERK_ISSUER,
     jwksUrl: process.env.CLERK_JWKS_URL,
     webhookSecret: process.env.CLERK_WEBHOOK_SECRET,
+    // Used to read the user's profile when provisioning on first request.
+    secretKey: process.env.CLERK_SECRET_KEY,
   },
 
   stripe: {

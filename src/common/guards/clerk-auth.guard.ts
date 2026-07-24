@@ -9,6 +9,7 @@ import { Reflector } from '@nestjs/core';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuthService } from '../../auth/auth.service';
 
 /**
  * Verifies Clerk-issued JWTs against Clerk's JWKS endpoint and attaches
@@ -22,6 +23,7 @@ export class ClerkAuthGuard implements CanActivate {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly reflector: Reflector,
+    private readonly auth: AuthService,
   ) {}
 
   private getJwks() {
@@ -54,11 +56,9 @@ export class ClerkAuthGuard implements CanActivate {
       });
 
       const clerkId = payload.sub as string;
-      const user = await this.prisma.user.findUnique({
-        where: { clerkId },
-        include: { memberships: { include: { workspace: true } } },
-      });
-      if (!user) throw new UnauthorizedException('User not provisioned');
+      // Creates the user + workspace + trial credits if the webhook hasn't.
+      const user = await this.auth.ensureProvisioned(clerkId);
+      if (!user) throw new UnauthorizedException('Could not provision account');
 
       req.user = user;
       const workspaceId =
@@ -71,7 +71,28 @@ export class ClerkAuthGuard implements CanActivate {
       return true;
     } catch (e) {
       if (e instanceof UnauthorizedException) throw e;
-      throw new UnauthorizedException('Invalid token');
+      // Distinguish a genuinely bad/expired token from a misconfigured
+      // issuer, which otherwise both surface as "please sign in again".
+      const message = (e as Error)?.message ?? '';
+      if (/issuer|audience|"iss"|"aud"/i.test(message)) {
+        throw new UnauthorizedException({
+          code: 'CLERK_ISSUER_MISMATCH',
+          message:
+            "Auth is misconfigured: the token's issuer doesn't match " +
+            'CLERK_ISSUER on the API. Check that both frontend and backend ' +
+            'use the same Clerk instance (development vs production keys).',
+        });
+      }
+      if (/expired|"exp"/i.test(message)) {
+        throw new UnauthorizedException({
+          code: 'TOKEN_EXPIRED',
+          message: 'Your session expired — please sign in again.',
+        });
+      }
+      throw new UnauthorizedException({
+        code: 'TOKEN_INVALID',
+        message: `Could not verify your session: ${message}`,
+      });
     }
   }
 }
