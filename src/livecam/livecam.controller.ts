@@ -113,6 +113,12 @@ export class LivecamController {
     return this.livecam.workerStatus();
   }
 
+  /** Debug: what the API resolved for the GPU worker, and can it reach it. */
+  @Get('worker/diagnostics')
+  workerDiagnostics() {
+    return this.livecam.workerDiagnostics();
+  }
+
   @Get('sessions')
   list(@CurrentMembership() m: AuthedMembership) {
     return this.livecam.listSessions(m.workspaceId);

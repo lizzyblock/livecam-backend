@@ -36,8 +36,21 @@ export class WorkerControlService {
   private get apiKey() {
     return this.config.get<string>('worker.runpodApiKey');
   }
+  /**
+   * Base URL of the GPU worker, normalised.
+   *
+   * People naturally paste the health-check URL they were testing with, so a
+   * trailing `/healthz` (or any trailing slash) is stripped. Left in place it
+   * turns every call into `/healthz/dispatch`, which 404s silently and looks
+   * exactly like a worker that won't start.
+   */
   private get workerUrl() {
-    return this.config.get<string>('livekit.workerUrl');
+    const raw = this.config.get<string>('livekit.workerUrl');
+    if (!raw) return undefined;
+    return raw
+      .trim()
+      .replace(/\/+$/, '')
+      .replace(/\/(healthz|health)$/i, '');
   }
   private get bootTimeoutMs() {
     return this.config.get<number>('worker.bootTimeoutMs') ?? 120_000;
@@ -53,6 +66,50 @@ export class WorkerControlService {
     const healthy = await this.ping();
     if (healthy) this.state = 'AWAKE';
     return { state: this.state, managed: true };
+  }
+
+  /**
+   * Everything the backend believes about the worker, for debugging.
+   *
+   * Config problems here are invisible from the outside — an unset or
+   * misspelled variable makes dispatch a silent no-op, which is
+   * indistinguishable from a worker that won't start. This reports what the
+   * process actually resolved, so the two can be told apart in one request.
+   */
+  async diagnostics() {
+    const configuredUrl = this.workerUrl;
+    const result: Record<string, unknown> = {
+      workerUrlConfigured: Boolean(configuredUrl),
+      workerUrl: configuredUrl ?? null,
+      rawEnvPresent: Boolean(process.env.LIVECAM_WORKER_URL),
+      runpodManaged: this.isManaged(),
+      state: this.state,
+    };
+
+    if (!configuredUrl) {
+      result.problem =
+        'LIVECAM_WORKER_URL is not set on this service. Dispatch is a no-op.';
+      return result;
+    }
+
+    try {
+      const started = Date.now();
+      const res = await fetch(`${configuredUrl}/healthz`);
+      const body: any = await res.json().catch(() => null);
+      result.reachable = res.ok;
+      result.latencyMs = Date.now() - started;
+      result.workerHealth = body;
+      if (!res.ok) {
+        result.problem = `Worker returned ${res.status} from ${configuredUrl}/healthz`;
+      } else if (body?.gpu === false) {
+        result.problem = 'Worker is running on CPU, not GPU.';
+      }
+    } catch (e) {
+      result.reachable = false;
+      result.problem = `Cannot reach worker: ${(e as Error).message}`;
+    }
+
+    return result;
   }
 
   /**

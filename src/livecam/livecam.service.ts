@@ -75,6 +75,11 @@ export class LivecamService {
     return this.worker.status();
   }
 
+  /** Full config/reachability report — see WorkerControlService.diagnostics. */
+  async workerDiagnostics() {
+    return this.worker.diagnostics();
+  }
+
   async startSession(
     workspaceId: string,
     userId: string,
@@ -179,13 +184,34 @@ export class LivecamService {
    * for new rooms via LiveKit webhooks as a fallback.
    */
   private async dispatchWorker(payload: Record<string, unknown>) {
-    const workerUrl = this.config.get<string>('livekit.workerUrl');
-    if (!workerUrl) return;
+    const raw = this.config.get<string>('livekit.workerUrl');
+    if (!raw) {
+      this.logger.warn('LIVECAM_WORKER_URL not set — no GPU worker to dispatch');
+      return;
+    }
+    // Same normalisation as WorkerControlService: tolerate a pasted
+    // /healthz suffix or trailing slash.
+    const workerUrl = raw
+      .trim()
+      .replace(/\/+$/, '')
+      .replace(/\/(healthz|health)$/i, '');
+
+    this.logger.log(`Dispatching worker for room ${payload.room}`);
     fetch(`${workerUrl}/dispatch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    }).catch((e) => this.logger.warn(`Worker dispatch failed: ${e.message}`));
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          this.logger.error(
+            `Worker dispatch returned ${res.status}: ${body.slice(0, 200)} ` +
+              `(url: ${workerUrl}/dispatch)`,
+          );
+        }
+      })
+      .catch((e) => this.logger.warn(`Worker dispatch failed: ${e.message}`));
   }
 
   /**
