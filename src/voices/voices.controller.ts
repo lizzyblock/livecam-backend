@@ -69,6 +69,12 @@ export class VoicesController {
     return this.voices.createClone(m.workspaceId, user.id, dto);
   }
 
+  /** Short spoken sample, rendered once then cached. */
+  @Post(':id/preview')
+  preview(@CurrentMembership() m: AuthedMembership, @Param('id') id: string) {
+    return this.voices.preview(m.workspaceId, id);
+  }
+
   @Delete(':id')
   remove(@CurrentMembership() m: AuthedMembership, @Param('id') id: string) {
     return this.voices.remove(m.workspaceId, id);

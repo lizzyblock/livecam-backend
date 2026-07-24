@@ -34,12 +34,67 @@ export class VoicesService implements OnModuleInit {
     await this.seedStockVoices().catch(() => undefined);
   }
 
-  /** Stock voices + this workspace's cloned voices. */
+  /** Stock voices + this workspace's cloned voices, with preview URLs. */
   async list(workspaceId: string) {
-    return this.prisma.voice.findMany({
+    const voices = await this.prisma.voice.findMany({
       where: { OR: [{ workspaceId: null }, { workspaceId }] },
       orderBy: [{ isCloned: 'asc' }, { createdAt: 'desc' }],
     });
+    return Promise.all(
+      voices.map(async (v: any) => ({
+        ...v,
+        previewUrl: v.previewKey
+          ? await this.storage.signedDownloadUrl(v.previewKey, 3600).catch(() => null)
+          : null,
+      })),
+    );
+  }
+
+  /**
+   * A short spoken sample of a voice, so people can hear it before
+   * committing to a stream. Rendered once and cached on the Voice row —
+   * re-synthesising per click would burn credits for nothing.
+   */
+  async preview(workspaceId: string, voiceId: string) {
+    const voice = await this.get(workspaceId, voiceId);
+
+    if (voice.previewKey) {
+      return {
+        url: await this.storage.signedDownloadUrl(voice.previewKey, 3600),
+        cached: true,
+      };
+    }
+    if (voice.status !== 'READY') {
+      throw new BadRequestException('This voice is still processing');
+    }
+
+    const key = this.storage.buildKey(workspaceId ?? 'stock', 'audio', 'mp3');
+    const sample =
+      'Hey, this is how I sound on stream. Nice to meet you.';
+
+    const res = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voice.providerVoiceId}?output_format=mp3_44100_128`,
+      {
+        method: 'POST',
+        headers: {
+          'xi-api-key': this.config.get<string>('providers.elevenlabsKey') ?? '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text: sample, model_id: 'eleven_flash_v2_5' }),
+      },
+    );
+    if (!res.ok) {
+      throw new BadRequestException(`Could not render a preview (${res.status})`);
+    }
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    await this.storage.upload(key, buf, 'audio/mpeg');
+    await this.prisma.voice.update({
+      where: { id: voice.id },
+      data: { previewKey: key },
+    });
+
+    return { url: await this.storage.signedDownloadUrl(key, 3600), cached: false };
   }
 
   async get(workspaceId: string, voiceId: string) {

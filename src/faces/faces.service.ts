@@ -29,11 +29,20 @@ export class FacesService {
     private readonly storage: StorageService,
   ) {}
 
+  /** Faces with a signed thumbnail URL, so the UI can show what it'll swap to. */
   async list(workspaceId: string) {
-    return this.prisma.faceModel.findMany({
+    const faces = await this.prisma.faceModel.findMany({
       where: { workspaceId },
       orderBy: { createdAt: 'desc' },
     });
+    return Promise.all(
+      faces.map(async (f: any) => ({
+        ...f,
+        previewUrl: await this.storage
+          .signedDownloadUrl(f.imageKey, 3600)
+          .catch(() => null),
+      })),
+    );
   }
 
   /** Signed URL the client uploads the reference portrait to (jpg/png). */
