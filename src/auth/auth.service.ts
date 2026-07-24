@@ -3,7 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { customAlphabet } from 'nanoid';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreditsService } from '../credits/credits.service';
-import { REFERRAL_BONUS_CREDITS } from '../config/pricing';
+import {
+  REFERRAL_BONUS_CREDITS,
+  TRIAL_CREDITS,
+  TRIAL_LIVECAM_SECONDS,
+} from '../config/pricing';
 
 const slugId = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 8);
 
@@ -136,7 +140,12 @@ export class AuthService {
               create: {
                 name: input.name ? `${input.name}'s Workspace` : 'My Workspace',
                 slug: `ws-${slugId()}`,
-                creditBalance: { create: { credits: 25 } }, // free trial credits
+                creditBalance: {
+                  create: {
+                    credits: TRIAL_CREDITS,
+                    livecamSeconds: TRIAL_LIVECAM_SECONDS,
+                  },
+                },
               },
             },
           },

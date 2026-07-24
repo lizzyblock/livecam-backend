@@ -37,5 +37,16 @@ export const PLANS: Record<string, PlanDefinition> = {
 
 export const REFERRAL_BONUS_CREDITS = 100;
 
+/**
+ * What a brand-new workspace gets before it ever pays.
+ *
+ * The LiveCam allowance matters as much as the credits: it's the flagship
+ * feature, and without a free taste of it nobody can evaluate the thing
+ * they'd actually be subscribing for. Ten minutes is enough to enroll a face,
+ * go live, and see the swap working — and it costs ~$0.07 of GPU time.
+ */
+export const TRIAL_CREDITS = 25;
+export const TRIAL_LIVECAM_SECONDS = 600; // 10 minutes
+
 /** One-time cost to enroll a face for real-time face swap. */
 export const FACE_ENROLL_CREDITS = 5;

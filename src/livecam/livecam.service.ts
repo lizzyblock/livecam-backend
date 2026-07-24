@@ -84,9 +84,18 @@ export class LivecamService {
   ) {
     const balance = await this.credits.getBalance(workspaceId);
     if (balance.livecamSeconds < 60) {
+      const hasPlan = await this.prisma.subscription.findFirst({
+        where: { workspaceId, status: { in: ['ACTIVE', 'TRIALING'] } },
+      });
       throw new BadRequestException({
         code: 'INSUFFICIENT_LIVECAM_MINUTES',
-        message: 'You need at least 1 minute of LiveCam time. Upgrade or top up to continue.',
+        message: hasPlan
+          ? "You've used all your LiveCam minutes this cycle. They reset on " +
+            'renewal, or you can top up to keep going now.'
+          : 'LiveCam minutes come with a plan. Pick one to start streaming — ' +
+            'every tier includes them.',
+        remainingSeconds: balance.livecamSeconds,
+        hasPlan: Boolean(hasPlan),
       });
     }
 
