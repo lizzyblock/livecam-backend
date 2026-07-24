@@ -87,6 +87,29 @@ async function bootstrap() {
 
   Logger.log(`CORS allows: ${[...allowed].join(', ')}`, 'Bootstrap');
 
+  // Print the same LiveKit fingerprint the GPU worker prints. If these two
+  // lines don't match, the worker's token will be rejected with a bare
+  // "invalid token" 401 and nothing else will indicate why.
+  {
+    const { createHash } = await import('crypto');
+    const secret = process.env.LIVEKIT_API_SECRET ?? '';
+    const fp = secret
+      ? createHash('sha256').update(secret).digest('hex').slice(0, 8)
+      : 'unset';
+    Logger.log(
+      `LiveKit config | url=${process.env.LIVEKIT_URL ?? 'unset'} | ` +
+        `key=${process.env.LIVEKIT_API_KEY ?? 'unset'} | secret_fp=${fp}`,
+      'Bootstrap',
+    );
+    if (secret !== secret.trim() || (process.env.LIVEKIT_API_KEY ?? '') !== (process.env.LIVEKIT_API_KEY ?? '').trim()) {
+      Logger.warn(
+        'LiveKit credentials contain leading/trailing whitespace — this ' +
+          'produces invalid tokens. Re-paste them.',
+        'Bootstrap',
+      );
+    }
+  }
+
   const rejected = new Set<string>();
 
   app.enableCors({
