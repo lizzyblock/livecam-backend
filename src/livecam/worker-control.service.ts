@@ -88,15 +88,25 @@ export class WorkerControlService {
     this.state = 'WAKING';
     this.logger.log(`Starting GPU pod ${this.podId} …`);
 
-    const res = await fetch(`https://rest.runpod.io/v1/pods/${this.podId}/start`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.apiKey}` },
-    });
-    // 4xx here often just means "already running" — keep polling regardless.
-    if (!res.ok && res.status >= 500) {
-      this.logger.error(`Pod start failed: ${res.status}`);
-      this.state = 'ASLEEP';
-      return false;
+    // The start call is advisory. It fails for reasons that don't matter to
+    // us — the pod is already running, Runpod hiccuped, the key lacks the
+    // scope — so its result never decides the outcome. Only whether the
+    // worker answers does. We log the body because a bare status code says
+    // nothing about which of those it was.
+    try {
+      const res = await fetch(
+        `https://rest.runpod.io/v1/pods/${this.podId}/start`,
+        { method: 'POST', headers: { Authorization: `Bearer ${this.apiKey}` } },
+      );
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        this.logger.warn(
+          `Pod start returned ${res.status}: ${body.slice(0, 300) || '(no body)'} ` +
+            '— continuing to poll in case it is already up.',
+        );
+      }
+    } catch (e) {
+      this.logger.warn(`Pod start request failed: ${(e as Error).message}`);
     }
 
     const deadline = Date.now() + this.bootTimeoutMs;
@@ -109,7 +119,11 @@ export class WorkerControlService {
       }
     }
 
-    this.logger.error('GPU worker did not come up before timeout');
+    this.logger.error(
+      `GPU worker did not answer at ${this.workerUrl}/healthz within ` +
+        `${Math.round(this.bootTimeoutMs / 1000)}s. Check the pod is running ` +
+        'and LIVECAM_WORKER_URL is correct.',
+    );
     this.state = 'ASLEEP';
     return false;
   }
@@ -125,17 +139,41 @@ export class WorkerControlService {
     this.state = 'ASLEEP';
   }
 
+  private pingFailureLogged = false;
+
   private async ping(): Promise<boolean> {
-    if (!this.workerUrl) return false;
+    if (!this.workerUrl) {
+      if (!this.pingFailureLogged) {
+        this.pingFailureLogged = true;
+        this.logger.error('LIVECAM_WORKER_URL is not set — cannot reach the GPU worker');
+      }
+      return false;
+    }
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 2500);
       const res = await fetch(`${this.workerUrl}/healthz`, { signal: ctrl.signal });
       clearTimeout(t);
       if (!res.ok) return false;
+
       const body: any = await res.json();
+      // Warn once if the worker is up but running on CPU — it will "work"
+      // at a couple of frames per second, which is not usable live.
+      if (body?.engine === true && body?.gpu === false && !this.pingFailureLogged) {
+        this.pingFailureLogged = true;
+        this.logger.warn(
+          'Worker is healthy but running on CPU, not GPU. Face swap will be ' +
+            'unusably slow. Rebuild the worker image.',
+        );
+      }
       return body?.engine === true;
-    } catch {
+    } catch (e) {
+      if (!this.pingFailureLogged) {
+        this.pingFailureLogged = true;
+        this.logger.warn(
+          `Worker unreachable at ${this.workerUrl}/healthz: ${(e as Error).message}`,
+        );
+      }
       return false;
     }
   }
