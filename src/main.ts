@@ -60,23 +60,56 @@ async function bootstrap() {
 
   app.use(helmet());
 
-  // Comma-separated list so you can allow your apex domain, www, and any
-  // Vercel preview URLs at once. e.g.
+  // Comma-separated list, e.g.
   //   FRONTEND_URL=https://yourdomain.com,https://www.yourdomain.com
-  const origins = (process.env.FRONTEND_URL ?? 'http://localhost:3000')
+  //
+  // Each entry automatically also permits its www/apex counterpart, since
+  // configuring only one and being hit by the other is an easy mistake that
+  // produces a confusing wall of CORS rejections.
+  const configured = (process.env.FRONTEND_URL ?? 'http://localhost:3000')
     .split(',')
-    .map((o) => o.trim())
+    .map((o) => o.trim().replace(/\/$/, ''))
     .filter(Boolean);
+
+  const allowed = new Set<string>();
+  for (const origin of configured) {
+    allowed.add(origin);
+    try {
+      const url = new URL(origin);
+      const host = url.host.startsWith('www.')
+        ? url.host.slice(4)
+        : `www.${url.host}`;
+      allowed.add(`${url.protocol}//${host}`);
+    } catch {
+      // Not a parseable URL — keep the literal entry only.
+    }
+  }
+
+  Logger.log(`CORS allows: ${[...allowed].join(', ')}`, 'Bootstrap');
+
+  const rejected = new Set<string>();
 
   app.enableCors({
     origin: (origin, cb) => {
-      // Allow same-origin/server-side calls with no Origin header.
+      // Same-origin and server-to-server calls send no Origin header.
       if (!origin) return cb(null, true);
-      if (origins.includes(origin)) return cb(null, true);
-      // Allow Vercel preview deployments if a preview suffix is configured.
+      const clean = origin.replace(/\/$/, '');
+      if (allowed.has(clean)) return cb(null, true);
+
       const preview = process.env.FRONTEND_PREVIEW_SUFFIX;
-      if (preview && origin.endsWith(preview)) return cb(null, true);
-      cb(new Error(`Origin not allowed by CORS: ${origin}`));
+      if (preview && clean.endsWith(preview)) return cb(null, true);
+
+      // Log each bad origin once. The frontend polls, so throwing (and
+      // logging a stack trace) per request buries every other log line.
+      if (!rejected.has(clean)) {
+        rejected.add(clean);
+        Logger.warn(
+          `CORS rejected origin ${clean} — add it to FRONTEND_URL ` +
+            `(currently: ${[...allowed].join(', ')})`,
+          'Bootstrap',
+        );
+      }
+      cb(null, false); // respond without CORS headers instead of throwing
     },
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Workspace-Id'],
